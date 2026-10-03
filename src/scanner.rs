@@ -119,9 +119,12 @@ impl Scanner {
     }
 
     fn identifier(&mut self) {
-        // TODO(you): scan an identifier, then decide whether it is a keyword; keyword() in
-        //            token.rs does the lookup (1.2, 1.3).
-        todo!("identifier")
+        while matches!(self.peek(), 'a'..='z' | 'A'..='Z' | '0'..='9' | '_') {
+            self.advance();
+        }
+
+        let word: String = self.src[self.start..self.current].iter().collect();
+        self.add(keyword(&word).unwrap_or(TokenType::Identifier));
     }
 
     // --- primitives ---------------------------------------------------------------
