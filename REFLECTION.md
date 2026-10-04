@@ -3,22 +3,21 @@
 ## CA1 Reflection Questions
 
 ### Question 1: Fractional Part Handling
-In `src/scanner.rs:123`, I only take the decimal point as part of a number if the character after it is a digit. That means `5.` gets scanned as the number `5`, and then the `.` is left for the next scan. The dot is not its own token, so it gets reported as `Character is not part of any token.` This matches section 1.4: a decimal point needs digits after it. The `trailing_dot.kobo` test checks this exact case, and it passes after rebuilding the current code.
+
+In `src/scanner.rs:136`, I only take the decimal point as part of a number if the character after it is a digit. That means `5.` gets scanned as the number `5`, and then the `.` is left for the next scan. Since dot is not a token, the scanner reports `Character is not part of any token.` This matches section 1.4. For `12.75`, the lookahead succeeds and the whole decimal becomes one number token. The `trailing_dot.kobo` case and valid decimals in `numbers.kobo` both pass. Checking before consuming the dot is what lets the scanner distinguish those cases.
 
 ---
 
 ### Question 2: Line Counter and EOF
-The only place I change the line counter is `src/scanner.rs:96`, when the scanner reads a newline. EOF works differently: `src/scanner.rs:34-37` takes the line from the last real token, not from the counter. So if the last token was on line 1 and the file has two blank lines after it, EOF still says line 1. This matches section 6.1, which says blank lines at the end should not change the token stream. The `eof_line.kobo` test checks that trailing newlines do not move EOF, and the code uses line 1 when there were no tokens at all.
+
+I increment the line counter in two places: `src/scanner.rs:96` for a normal newline and `src/scanner.rs:114` for a newline inside a string. EOF works differently: `src/scanner.rs:34-37` takes its line from the last real token, not from the counter. So if the last token was on line 1 and the file has two blank lines after it, EOF still says line 1, even though those newlines were counted. This matches section 6.1: blank lines at the end do not change the token stream. The `eof_line.kobo` test checks this. If the source is empty or only comments, there is no real token, so EOF uses line 1.
 
 ---
 
 ### Question 3: Debugging and Learning (Failed Test Reflection)
-After rebuilding, `tests/phase-1/invalid/unterminated_string.kobo` failed because `string()` at `src/scanner.rs:112` is still a `todo!()`. The expected error is `String is never closed.`, but the scanner panics before it can report it. I don't have a fix commit for this failure yet, so I can't honestly give the two commit hashes or quote the wrong line and its fixed version. I still need to implement string scanning, get this test passing, and then record the actual before-and-after commits.
+
+`tests/phase-1/valid/numbers.kobo` failed when `number()` was unfinished. In commit `50fb018732d1059263d143da5d863bdccb6338c7`, `src/scanner.rs:118` was `todo!("number")`, so scanning stopped with a panic. I had not implemented the rule that the dot belongs to a number only when followed by a digit. In commit `d136fa5ed272fa1849e269961bd06d0e554fc615`, the check was `src/scanner.rs:123`: `if self.peek() == '.' && self.peek_next().is_ascii_digit() {`, and the token was emitted at `src/scanner.rs:134`: `self.add(TokenType::Number);`. Those are the lines as they appeared in that commit. They now appear at `src/scanner.rs:136` and `src/scanner.rs:147`. Both commits are before the deadline. I understand why lookahead must happen before consuming the dot.
 
 ## Change & Development Reflection Log
 
-I filled in the identifier scanner so it reads the whole word before checking whether it is a keyword (`src/scanner.rs:138-145`). That helped me understand why `while` should become a `WHILE` token, but `while2` should stay an identifier.
-
-I also wrote the number scanner (`src/scanner.rs:115-135`). It reads the digits, checks one character ahead before including a decimal point, and then adds a number token. The number cases, including the leading- and trailing-dot errors, pass in the current golden run.
-
-The scanner test run currently reports `12/14`. `string()` is still unfinished at `src/scanner.rs:109-112`, so string input is the part I still need to work on.
+I completed `string()` at `src/scanner.rs:109-126`: it counts newlines inside a string, keeps the opening line for an unterminated-string error, and includes the closing quote in a successful token. `cargo build` succeeds and `tool/run-golden phase-1` passes 14/14. Extra checks also passed for all keywords, operators, empty/comment-only input, CRLF, multiline strings, and multiple bad characters. The expected failures printed `[line 1] Error: Character is not part of any token.` for both `.5` and `5.`, and `[line 2] Error: String is never closed.` for a string opened on line 2; each exited 65. Three invalid characters produced three diagnostics and exit 65. A separate stress run passed all 257 cases, including very long tokens and strings, repeated operators, Unicode, and seeded random input, with no crashes. These checks passed; the hidden marking tests have not been run.

@@ -107,9 +107,22 @@ impl Scanner {
 
 
     fn string(&mut self) {
-        // TODO(you): scan a string literal. A string may span lines (1.5); an unterminated one
-        //            is reported at the line it opened on (5.1).
-        todo!("string")
+        let opening_line = self.line;
+
+        while self.peek() != '"' && !self.at_end() {
+            if self.peek() == '\n' {
+                self.line += 1;
+            }
+            self.advance();
+        }
+
+        if self.at_end() {
+            self.error(opening_line, "String is never closed.");
+            return;
+        }
+
+        self.advance();
+        self.add(TokenType::Str);
     }
 
     fn number(&mut self) {
