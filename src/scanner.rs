@@ -113,10 +113,27 @@ impl Scanner {
     }
 
     fn number(&mut self) {
-        // TODO(you): scan a number literal: digits, then a fractional part only when a digit
-        //            follows the dot (1.4).
-        todo!("number")
+        // 1. Consume digits in the integer part
+        while self.peek().is_ascii_digit() {
+            self.advance();
+        }
+
+        // 2. Look for fractional part with two-character lookahead
+        //    (Section 1.4 & Slide 54: only consume '.' if followed by a digit)
+        if self.peek() == '.' && self.peek_next().is_ascii_digit() {
+            // Consume the '.'
+            self.advance();
+
+            // 3. Consume digits in the fractional part
+            while self.peek().is_ascii_digit() {
+                self.advance();
+            }
+        }
+
+        // 4. Emit the NUMBER token
+        self.add(TokenType::Number);
     }
+
 
     fn identifier(&mut self) {
         while matches!(self.peek(), 'a'..='z' | 'A'..='Z' | '0'..='9' | '_') {
