@@ -135,75 +135,198 @@ impl Parser {
     /// way. So the left side is parsed as an ordinary expression and *then* checked, which
     /// is the standard answer to a rule that is not LL(1).
     fn assignment(&mut self) -> Parsed<Expr> {
-        // TODO(you): spec 3.2. The left side parses as an ordinary expression and is checked
-        //            afterwards, because the rule is not LL(1).
-        // TEMPORARY: enough of this rule to let the ones below it run. Replace it in its
-        //            own week; the marking tests for it fail until you do.
-        self.or()
+        // The left side cannot be told apart from an ordinary expression until the `=` is
+        // reached (section 3.2), so it is parsed as one, then inspected.
+        let expr = self.or()?;
+        if self.matches(&[TokenType::Equal]) {
+            let equals = self.previous();
+            // Right-associative: `a = b = 0` binds as `a = (b = 0)`, so the right side is
+            // another `assignment()`, not an `or()`.
+            let value = self.assignment()?;
+            return match expr {
+                Expr::Variable { name, at } => Ok(Expr::Assign {
+                    name,
+                    value: Box::new(value),
+                    at,
+                }),
+                _ => {
+                    self.error_at(&equals, "Cannot assign to this expression.");
+                    Err(())
+                }
+            };
+        }
+        Ok(expr)
     }
 
     fn or(&mut self) -> Parsed<Expr> {
-        // TODO(you): spec 3.2, one rung of the precedence ladder.
-        // TEMPORARY: enough of this rule to let the ones below it run. Replace it in its
-        //            own week; the marking tests for it fail until you do.
-        self.and()
+        let mut expr = self.and()?;
+        while self.matches(&[TokenType::Or]) {
+            let op = self.previous();
+            let right = self.and()?;
+            expr = Expr::Logical {
+                left: Box::new(expr),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
     }
 
     fn and(&mut self) -> Parsed<Expr> {
-        // TODO(you): spec 3.2, one rung of the precedence ladder.
-        // TEMPORARY: enough of this rule to let the ones below it run. Replace it in its
-        //            own week; the marking tests for it fail until you do.
-        self.equality()
+        let mut expr = self.equality()?;
+        while self.matches(&[TokenType::And]) {
+            let op = self.previous();
+            let right = self.equality()?;
+            expr = Expr::Logical {
+                left: Box::new(expr),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
     }
 
     fn equality(&mut self) -> Parsed<Expr> {
-        // TODO(you): spec 3.2, one rung of the precedence ladder.
-        // TEMPORARY: enough of this rule to let the ones below it run. Replace it in its
-        //            own week; the marking tests for it fail until you do.
-        self.comparison()
+        let mut expr = self.comparison()?;
+        while self.matches(&[TokenType::BangEqual, TokenType::EqualEqual]) {
+            let op = self.previous();
+            let right = self.comparison()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
     }
 
     fn comparison(&mut self) -> Parsed<Expr> {
-        // TODO(you): spec 3.2, one rung of the precedence ladder.
-        // TEMPORARY: enough of this rule to let the ones below it run. Replace it in its
-        //            own week; the marking tests for it fail until you do.
-        self.term()
+        let mut expr = self.term()?;
+        while self.matches(&[
+            TokenType::Greater,
+            TokenType::GreaterEqual,
+            TokenType::Less,
+            TokenType::LessEqual,
+        ]) {
+            let op = self.previous();
+            let right = self.term()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
     }
 
+    /// `term → factor ( ( "-" | "+" ) factor )*`. Left-associative: each pass through the
+    /// loop makes the expression built so far the *left* child of the next binary node,
+    /// so `1 - 2 - 3` nests as `(- (- 1 2) 3)` and not the other way round.
     fn term(&mut self) -> Parsed<Expr> {
-        // TODO(you): spec 3.2, one rung of the precedence ladder.
-        todo!("term")
+        let mut expr = self.factor()?;
+        while self.matches(&[TokenType::Minus, TokenType::Plus]) {
+            let op = self.previous();
+            let right = self.factor()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
     }
 
+    /// `factor → unary ( ( "/" | "*" ) unary )*`. Same shape as `term`, one rung higher.
     fn factor(&mut self) -> Parsed<Expr> {
-        // TODO(you): spec 3.2, one rung of the precedence ladder.
-        todo!("factor")
+        let mut expr = self.unary()?;
+        while self.matches(&[TokenType::Slash, TokenType::Star]) {
+            let op = self.previous();
+            let right = self.unary()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
     }
 
+    /// `unary → ( "!" | "-" ) unary | call`. Right-associative, so `!!x` recurses into
+    /// itself rather than looping: the inner `unary()` call, not a `while`, is what makes
+    /// `- - 1` parse as `(- (- 1))`.
     fn unary(&mut self) -> Parsed<Expr> {
-        // TODO(you): spec 3.2: unary operators are right-associative.
-        // TEMPORARY: enough of this rule to let the ones below it run. Replace it in its
-        //            own week; the marking tests for it fail until you do.
+        if self.matches(&[TokenType::Bang, TokenType::Minus]) {
+            let op = self.previous();
+            let right = self.unary()?;
+            return Ok(Expr::Unary {
+                op,
+                right: Box::new(right),
+            });
+        }
         self.call()
     }
 
     /// A loop, not recursion: `f(1)(2)` is one callee called twice, and the grammar says
     /// `call → primary ( "(" arguments? ")" )*` for exactly that reason.
     fn call(&mut self) -> Parsed<Expr> {
-        // TODO(you): spec 3.2: call -> primary ( '(' arguments? ')' )*. That is a loop, not
-        //            recursion; f(1)(2) is one callee called twice.
-        // TEMPORARY: enough of this rule to let the ones below it run. Replace it in its
-        //            own week; the marking tests for it fail until you do.
-        self.primary()
+        let mut expr = self.primary()?;
+        while self.matches(&[TokenType::LParen]) {
+            expr = self.finish_call(expr)?;
+        }
+        Ok(expr)
+    }
+
+    /// The `(` is already consumed; `expr` is the callee. `arguments → expression ( ","
+    /// expression )*`, and an empty argument list is legal (`f()`), which is why this
+    /// checks for `)` before trying to parse a first argument.
+    fn finish_call(&mut self, callee: Expr) -> Parsed<Expr> {
+        let mut args = Vec::new();
+        if !self.check(TokenType::RParen) {
+            loop {
+                args.push(self.expression()?);
+                if !self.matches(&[TokenType::Comma]) {
+                    break;
+                }
+            }
+        }
+        let paren = self.consume(TokenType::RParen, "Expect ')' after arguments.")?;
+        Ok(Expr::Call {
+            callee: Box::new(callee),
+            paren,
+            args,
+        })
     }
 
     fn primary(&mut self) -> Parsed<Expr> {
-        // TODO(you): spec 3.2: literals, identifiers and grouping.
-        // TEMPORARY: enough of this rule to let the ones below it run. Replace it in its
-        //            own week; the marking tests for it fail until you do.
         if self.matches(&[TokenType::Number]) {
             let n = self.previous().lexeme.parse::<f64>().unwrap();
             return Ok(self.literal(Value::Number(n)));
+        }
+        if self.matches(&[TokenType::Str]) {
+            // The lexeme carries its surrounding quotes (token.rs), the Value must not.
+            let lexeme = self.previous().lexeme;
+            let text = lexeme[1..lexeme.len() - 1].to_string();
+            return Ok(self.literal(Value::Str(text)));
+        }
+        if self.matches(&[TokenType::True]) {
+            return Ok(self.literal(Value::Bool(true)));
+        }
+        if self.matches(&[TokenType::False]) {
+            return Ok(self.literal(Value::Bool(false)));
+        }
+        if self.matches(&[TokenType::Nil]) {
+            return Ok(self.literal(Value::Nil));
+        }
+        if self.matches(&[TokenType::Identifier]) {
+            return Ok(Expr::Variable {
+                name: self.previous(),
+                at: Resolved::default(),
+            });
+        }
+        if self.matches(&[TokenType::LParen]) {
+            let inner = self.expression()?;
+            self.consume(TokenType::RParen, "Expect ')' after expression.")?;
+            return Ok(Expr::Grouping(Box::new(inner)));
         }
         self.error("Expect expression.");
         Err(())
