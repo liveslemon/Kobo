@@ -45,22 +45,64 @@ impl Parser {
     // --- declarations and statements ------------------------------------------------
 
     fn declaration(&mut self) -> Parsed<Stmt> {
-        // TODO(you): spec 3.1: a declaration is a fun, a var, or a statement. This is also
-        //            where an error is caught and synchronise() runs.
-        // TEMPORARY: enough of this rule to let the ones below it run. Replace it in its
-        //            own week; the marking tests for it fail until you do.
+        if self.matches(&[TokenType::Fun]) {
+            return self.fun_declaration();
+        }
+        if self.matches(&[TokenType::Var]) {
+            return self.var_declaration();
+        }
         self.statement()
     }
 
+    /// `"fun"` is already consumed. Functions are hoisted into `Program::functions` rather
+    /// than kept in the tree: the `Stmt::Function` that stays behind just names an index.
     fn fun_declaration(&mut self) -> Parsed<Stmt> {
-        // TODO(you): spec 3.1: a function declaration, its parameter list, and its body.
-        //            Functions are hoisted into Program::functions.
-        todo!("fun_declaration")
+        let name_tok = self.consume(TokenType::Identifier, "Expect function name.")?;
+        self.consume(TokenType::LParen, "Expect '(' after function name.")?;
+        let mut params = Vec::new();
+        if !self.check(TokenType::RParen) {
+            loop {
+                let param = self.consume(TokenType::Identifier, "Expect parameter name.")?;
+                params.push(param.lexeme);
+                if !self.matches(&[TokenType::Comma]) {
+                    break;
+                }
+            }
+        }
+        self.consume(TokenType::RParen, "Expect ')' after parameters.")?;
+        self.consume(TokenType::LBrace, "Expect '{' before function body.")?;
+        let body = self.block()?;
+        let index = self.program.functions.len();
+        self.program.functions.push(Function {
+            name: name_tok.lexeme.clone(),
+            params,
+            body,
+            line: name_tok.line,
+        });
+        Ok(Stmt::Function {
+            index,
+            name: name_tok.lexeme,
+            slot: None,
+        })
     }
 
+    /// `"var"` is already consumed. No initialiser means `nil` (section 3.1).
     fn var_declaration(&mut self) -> Parsed<Stmt> {
-        // TODO(you): spec 3.1: 'var' name ( '=' expression )? ';'
-        todo!("var_declaration")
+        let name = self.consume(TokenType::Identifier, "Expect variable name.")?;
+        let initialiser = if self.matches(&[TokenType::Equal]) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        self.consume(
+            TokenType::Semicolon,
+            "Expect ';' after variable declaration.",
+        )?;
+        Ok(Stmt::Var {
+            name,
+            initialiser,
+            slot: None,
+        })
     }
 
     fn statement(&mut self) -> Parsed<Stmt> {
@@ -71,16 +113,18 @@ impl Parser {
     }
 
     fn statement_inner(&mut self) -> Parsed<Stmt> {
-        // TODO(you): spec 3.1: pick the statement by its leading token.
-        // TEMPORARY: enough of this rule to let the ones below it run. Replace it in its
-        //            own week; the marking tests for it fail until you do.
-        // Named rather than misreported, so an `if` says what it is instead of failing
-        // as a broken expression.
-        if self.check(TokenType::LBrace) || self.check(TokenType::If)
-            || self.check(TokenType::While) || self.check(TokenType::Return)
-        {
-            self.error("This statement form is not written yet.");
-            return Err(());
+        if self.matches(&[TokenType::If]) {
+            return self.if_statement();
+        }
+        if self.matches(&[TokenType::While]) {
+            return self.while_statement();
+        }
+        if self.matches(&[TokenType::Return]) {
+            return self.return_statement();
+        }
+        if self.matches(&[TokenType::LBrace]) {
+            let body = self.block()?;
+            return Ok(Stmt::Block { body, locals: 0 });
         }
         if self.matches(&[TokenType::Print]) {
             let value = self.expression()?;
@@ -93,27 +137,58 @@ impl Parser {
         }
     }
 
+    /// `"return"` is already consumed. No expression means `nil` (section 3.1); a `return`
+    /// outside any function is still legal here — nothing in the parser's own state tracks
+    /// whether it is inside one, and section 3.1 says that is fine.
     fn return_statement(&mut self) -> Parsed<Stmt> {
-        // TODO(you): spec 3.1: 'return' expression? ';'
-        todo!("return_statement")
+        let value = if self.check(TokenType::Semicolon) {
+            None
+        } else {
+            Some(self.expression()?)
+        };
+        self.consume(TokenType::Semicolon, "Expect ';' after return value.")?;
+        Ok(Stmt::Return(value))
     }
 
+    /// `"if"` is already consumed. The dangling `else` binds to the nearest unmatched
+    /// `if` because this function, like every other rule, is a single call that either
+    /// sees an `else` right here and consumes it, or doesn't — there is no notion of
+    /// "give this else back to an outer if" anywhere in recursive descent.
     fn if_statement(&mut self) -> Parsed<Stmt> {
-        // TODO(you): spec 3.1. The dangling else binds to the nearest unmatched if , the
-        //            recursion decides that, not the grammar.
-        todo!("if_statement")
+        self.consume(TokenType::LParen, "Expect '(' after 'if'.")?;
+        let condition = self.expression()?;
+        self.consume(TokenType::RParen, "Expect ')' after if condition.")?;
+        let then_branch = Box::new(self.statement()?);
+        let else_branch = if self.matches(&[TokenType::Else]) {
+            Some(Box::new(self.statement()?))
+        } else {
+            None
+        };
+        Ok(Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+        })
     }
 
+    /// `"while"` is already consumed.
     fn while_statement(&mut self) -> Parsed<Stmt> {
-        // TODO(you): spec 3.1: 'while' '(' expression ')' statement
-        todo!("while_statement")
+        self.consume(TokenType::LParen, "Expect '(' after 'while'.")?;
+        let condition = self.expression()?;
+        self.consume(TokenType::RParen, "Expect ')' after while condition.")?;
+        let body = Box::new(self.statement()?);
+        Ok(Stmt::While { condition, body })
     }
 
     /// The `{` is already consumed. Declarations, not statements: a block is where a
     /// `var` most often appears, and the whole point of one is that the name dies at `}`.
     fn block(&mut self) -> Parsed<Vec<Stmt>> {
-        // TODO(you): spec 3.1: '{' declaration* '}'
-        todo!("block")
+        let mut stmts = Vec::new();
+        while !self.check(TokenType::RBrace) && !self.at_end() {
+            stmts.push(self.declaration()?);
+        }
+        self.consume(TokenType::RBrace, "Expect '}' after block.")?;
+        Ok(stmts)
     }
 
     // --- expressions, lowest precedence first --------------------------------------
