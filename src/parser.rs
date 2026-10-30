@@ -422,7 +422,11 @@ impl Parser {
         // Always step over at least one token first: the token the error happened on is
         // never itself a safe place to resume, even when it happens to be one of the
         // keywords below (e.g. `if (;) ...`, where the `;` is the token that failed).
-        self.current += 1;
+        // Guarded by `at_end()`: an error reported on EOF itself (`print 1 +`) must not
+        // walk `current` past the token array.
+        if !self.at_end() {
+            self.current += 1;
+        }
         while !self.at_end() {
             if self.previous().kind == TokenType::Semicolon {
                 return;
